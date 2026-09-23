@@ -733,13 +733,28 @@ set_gaierror(socket_state *state, int error)
 #include <BluePyCpp.h>
 #include <carbonio.h>
 
+/* SOCK_NONBLOCK / SOCK_CLOEXEC may be OR'd into the socket type on Linux. They
+   are never part of the type libuv or init_sockobject() sees: libuv creates its
+   own sockets (non-blocking and close-on-exec) and init_sockobject() masks the
+   flags from sock_type and turns SOCK_NONBLOCK into a zero timeout. */
+static inline int strip_type_flags( int sock_type )
+{
+#ifdef SOCK_NONBLOCK
+	sock_type &= ~SOCK_NONBLOCK;
+#endif
+#ifdef SOCK_CLOEXEC
+	sock_type &= ~SOCK_CLOEXEC;
+#endif
+	return sock_type;
+}
+
 bool is_managed_by_libuv( int sock_type, int family )
 {
-	if ( sock_type == SOCK_DGRAM ) {
-		return true;
-	}
+	sock_type = strip_type_flags( sock_type );
 
-	if ( sock_type == SOCK_STREAM ) {
+	// uv_tcp_init_ex / uv_udp_init_ex only accept AF_INET and AF_INET6; every other
+	// family (AF_UNIX, AF_CAN, AF_ALG, ...) is a plain BSD socket.
+	if ( sock_type == SOCK_DGRAM || sock_type == SOCK_STREAM ) {
 		return family == AF_INET || family == AF_INET6;
 	}
 
@@ -5511,7 +5526,7 @@ sock_sendmsg_afalg(PySocketSockObject *self, PyObject *args, PyObject *kwds)
     header->cmsg_level = SOL_ALG;
     header->cmsg_type = ALG_SET_OP;
     header->cmsg_len = CMSG_LEN(4);
-    uiptr = (void*)CMSG_DATA(header);
+    uiptr = (unsigned int*)CMSG_DATA(header);
     *uiptr = (unsigned int)op;
 
     /* set initialization vector */
@@ -5525,7 +5540,7 @@ sock_sendmsg_afalg(PySocketSockObject *self, PyObject *args, PyObject *kwds)
         header->cmsg_level = SOL_ALG;
         header->cmsg_type = ALG_SET_IV;
         header->cmsg_len = CMSG_SPACE(sizeof(*alg_iv) + iv.len);
-        alg_iv = (void*)CMSG_DATA(header);
+        alg_iv = (struct af_alg_iv*)CMSG_DATA(header);
         alg_iv->ivlen = iv.len;
         memcpy(alg_iv->iv, iv.buf, iv.len);
     }
@@ -5541,7 +5556,7 @@ sock_sendmsg_afalg(PySocketSockObject *self, PyObject *args, PyObject *kwds)
         header->cmsg_level = SOL_ALG;
         header->cmsg_type = ALG_SET_AEAD_ASSOCLEN;
         header->cmsg_len = CMSG_LEN(4);
-        uiptr = (void*)CMSG_DATA(header);
+        uiptr = (unsigned int*)CMSG_DATA(header);
         *uiptr = (unsigned int)assoclen;
     }
 
@@ -6387,7 +6402,7 @@ sock_initobj_impl(PySocketSockObject *self, int family, int type, int proto,
 				if( s->uv_handle == nullptr )
 				{
 					// No handle found for re-use, must create one.
-					if( type == SOCK_STREAM )
+					if( strip_type_flags( type ) == SOCK_STREAM )
 					{
 						auto handle = create_uv_tcp_handle( &fd, family );
 						if( !handle )
@@ -6396,7 +6411,7 @@ sock_initobj_impl(PySocketSockObject *self, int family, int type, int proto,
 						}
 						s->uv_handle = reinterpret_cast<uv_handle_t*>( handle );
 					}
-					else if( type == SOCK_DGRAM )
+					else if( strip_type_flags( type ) == SOCK_DGRAM )
 					{
 						auto handle = create_uv_udp_handle( &fd, family );
 						if( !handle )
@@ -6422,7 +6437,7 @@ sock_initobj_impl(PySocketSockObject *self, int family, int type, int proto,
         }
 		if ( is_managed_by_libuv( type, family ))
 		{
-			if( type == SOCK_STREAM )
+			if( strip_type_flags( type ) == SOCK_STREAM )
 			{
 				auto handle = create_uv_tcp_handle( &fd, family );
 				if( !handle )
@@ -6431,7 +6446,7 @@ sock_initobj_impl(PySocketSockObject *self, int family, int type, int proto,
 				}
 				s->uv_handle = reinterpret_cast<uv_handle_t*>( handle );
 			}
-			else if( type == SOCK_DGRAM )
+			else if( strip_type_flags( type ) == SOCK_DGRAM )
 			{
 				auto handle = create_uv_udp_handle( &fd, family );
 				if( !handle )
@@ -6492,7 +6507,7 @@ sock_initobj_impl(PySocketSockObject *self, int family, int type, int proto,
 			s->uv_handle = LookupHandle( fd );
 			if ( ! s->uv_handle && is_managed_by_libuv( type, family ) )
 			{
-				if( type == SOCK_STREAM )
+				if( strip_type_flags( type ) == SOCK_STREAM )
 				{
 					auto handle = create_uv_tcp_handle(&fd, family);
 					if( !handle )
@@ -6501,7 +6516,7 @@ sock_initobj_impl(PySocketSockObject *self, int family, int type, int proto,
 					}
 					s->uv_handle = reinterpret_cast<uv_handle_t*>(handle);
 				}
-				else if( type == SOCK_DGRAM )
+				else if( strip_type_flags( type ) == SOCK_DGRAM )
 				{
 					auto handle = create_uv_udp_handle(&fd, family);
 					if( !handle )
@@ -7438,43 +7453,41 @@ socket_socketpair(PyObject *self, PyObject *args)
         return NULL;
 
     /* Create a pair of socket fds */
-    Py_BEGIN_ALLOW_THREADS
-#ifdef SOCK_CLOEXEC
-    if (state->sock_cloexec_works != 0) {
-        ret = socketpair(family, type | SOCK_CLOEXEC, proto, sv);
-        if (state->sock_cloexec_works == -1) {
-            if (ret >= 0) {
-                state->sock_cloexec_works = 1;
-            }
-            else if (errno == EINVAL) {
-                /* Linux older than 2.6.27 does not support SOCK_CLOEXEC */
-                state->sock_cloexec_works = 0;
-                ret = socketpair(family, type, proto, sv);
-            }
-        }
-    }
-    else
-#endif
-	Py_END_ALLOW_THREADS
 	if( !is_managed_by_libuv(type, family) )
 	{
 #ifdef HAVE_SOCKETPAIR
-		if( socketpair(family, type, proto, sv) < 0)
+		/* Plain BSD socket pair (AF_UNIX etc.), exactly as CPython does it. The
+		   Py_END_ALLOW_THREADS must cover both branches: an `else` that binds to
+		   the macro leaves the GIL released on the success path. */
+		Py_BEGIN_ALLOW_THREADS
+#ifdef SOCK_CLOEXEC
+		if (state->sock_cloexec_works != 0) {
+			ret = socketpair(family, type | SOCK_CLOEXEC, proto, sv);
+			if (state->sock_cloexec_works == -1) {
+				if (ret >= 0) {
+					state->sock_cloexec_works = 1;
+				}
+				else if (errno == EINVAL) {
+					/* Linux older than 2.6.27 does not support SOCK_CLOEXEC */
+					state->sock_cloexec_works = 0;
+					ret = socketpair(family, type, proto, sv);
+				}
+			}
+		}
+		else
+#endif
+		{
+			ret = socketpair(family, type, proto, sv);
+		}
+		Py_END_ALLOW_THREADS
+		if( ret < 0 )
 			return set_error();
-		s0 = new_sockobject(state, sv[0], family, type, proto);
-		if( s0 == NULL )
-			goto finally;
-		s1 = new_sockobject(state, sv[1], family, type, proto);
-		if( s1 == NULL )
-			goto finally;
-		res = PyTuple_Pack(2, s0, s1);
 		goto socketpair_created;
 #else
-		PyErr_Format(PyExc_NotImplementedError, "Unsupported socket type %d", type);
-		goto finally;
+		return PyErr_Format(PyExc_NotImplementedError, "Unsupported socket type %d", type);
 #endif
 	}
-	ret = uv_socketpair( type, proto, sv, UV_NONBLOCK_PIPE, UV_NONBLOCK_PIPE );
+	ret = uv_socketpair( strip_type_flags( type ), proto, sv, UV_NONBLOCK_PIPE, UV_NONBLOCK_PIPE );
 
     if (ret < 0)
 	{
@@ -7482,7 +7495,7 @@ socket_socketpair(PyObject *self, PyObject *args)
 		goto finally;
 	}
 
-	if( type == SOCK_STREAM )
+	if( strip_type_flags( type ) == SOCK_STREAM )
 	{
 		auto handle = dup_uv_tcp_handle( sv[0] );
 		if( !handle )
@@ -7495,7 +7508,7 @@ socket_socketpair(PyObject *self, PyObject *args)
 			goto finally;
 		}
 	}
-	else if( type == SOCK_DGRAM )
+	else if( strip_type_flags( type ) == SOCK_DGRAM )
 	{
 		auto handle = dup_uv_udp_handle( sv[0] );
 		if( !handle )

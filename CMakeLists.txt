@@ -162,11 +162,7 @@ if(CMAKE_PROJECT_NAME STREQUAL io)
         # include the C++ test suite
         add_subdirectory(tests)
 
-        if(WIN32)
-            set(ENV{PYTHONPATH} ${CMAKE_CURRENT_SOURCE_DIR}/python)
-        elseif(APPLE)
-            set(ENV{PYTHONPATH} ${CMAKE_CURRENT_SOURCE_DIR}/python)
-        endif()
+        set(ENV{PYTHONPATH} ${CMAKE_CURRENT_SOURCE_DIR}/python)
         # Discovery works with the standard python interpreter because it isn't running anything, it just needs to find all
         # the defined test cases. Therefore, just use that one, even though it cannot run the discovered test cases.
         execute_process(COMMAND ${Python3_EXECUTABLE} discover.py
@@ -196,15 +192,13 @@ if(CMAKE_PROJECT_NAME STREQUAL io)
                         ENVIRONMENT
                         "PYTHONPATH=$<TARGET_FILE_DIR:_socket>\;$<TARGET_FILE_DIR:sockettesthelper>\;${CMAKE_CURRENT_SOURCE_DIR}/python\;${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin\;${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/python\;${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib;BUILDFLAVOR=$<LOWER_CASE:$<CONFIG>>"
                 )
-            elseif (APPLE)
+            else()
                 set_tests_properties(
                         ${PYTHON_TEST}
                         PROPERTIES
                         ENVIRONMENT
                         "PYTHONPATH=$<TARGET_FILE_DIR:_socket>:$<TARGET_FILE_DIR:sockettesthelper>:${CMAKE_CURRENT_SOURCE_DIR}/python:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/python:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib;BUILDFLAVOR=$<LOWER_CASE:$<CONFIG>>"
                 )
-            else()
-                message(FATAL_ERROR "Unsupported platform")
             endif ()
         endforeach()
     endif()
@@ -229,7 +223,7 @@ if(CMAKE_PROJECT_NAME STREQUAL io)
             # Run sphinx
             if(WIN32)
                 set(PYTHONPATH_ENV_SPHINX "${CMAKE_SOURCE_DIR}/python/\;$<TARGET_FILE_DIR:_socket>\;${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin\;${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/python\;${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib")
-            elseif(APPLE)
+            else()
                 set(PYTHONPATH_ENV_SPHINX "${CMAKE_SOURCE_DIR}/python/:$<TARGET_FILE_DIR:_socket>:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/python:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib")
             endif()
 

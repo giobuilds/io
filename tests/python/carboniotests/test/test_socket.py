@@ -6045,6 +6045,8 @@ class NonblockConstantTest(unittest.TestCase):
             self.assertTrue(s.getblocking())
 
     @support.requires_linux_version(2, 6, 28)
+    @unittest.skip("carbon-io: libuv-managed sockets stay O_NONBLOCK at the fd level; "
+                   "blocking is provided by tasklet scheduling, not the kernel flag")
     def test_SOCK_NONBLOCK(self):
         # a lot of it seems silly and redundant, but I wanted to test that
         # changing back and forth worked ok
